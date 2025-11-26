@@ -1,0 +1,596 @@
+// 전역 변수
+let uploadedImage = null;
+let pipeline = [];
+let effectIdCounter = 0;
+
+// DOM 요소
+const uploadArea = document.getElementById('uploadArea');
+const fileInput = document.getElementById('fileInput');
+const pipelineContainer = document.getElementById('pipeline');
+const addEffectBtn = document.getElementById('addEffectBtn');
+const processBtn = document.getElementById('processBtn');
+const resetBtn = document.getElementById('resetBtn');
+const preview = document.getElementById('preview');
+const originalImage = document.getElementById('originalImage');
+const resultCanvas = document.getElementById('resultCanvas');
+const downloadBtn = document.getElementById('downloadBtn');
+const downloadIcnsBtn = document.getElementById('downloadIcnsBtn');
+const info = document.getElementById('info');
+const effectModal = document.getElementById('effectModal');
+const icnsModal = document.getElementById('icnsModal');
+
+// ==================== 이벤트 리스너 ====================
+
+// 업로드 영역 이벤트
+uploadArea.addEventListener('click', () => fileInput.click());
+
+fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) loadImage(file);
+});
+
+uploadArea.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    uploadArea.classList.add('dragover');
+});
+
+uploadArea.addEventListener('dragleave', () => {
+    uploadArea.classList.remove('dragover');
+});
+
+uploadArea.addEventListener('drop', (e) => {
+    e.preventDefault();
+    uploadArea.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file && file.type.startsWith('image/')) loadImage(file);
+});
+
+// 효과 추가 버튼
+addEffectBtn.addEventListener('click', () => {
+    effectModal.classList.add('active');
+});
+
+// 효과 옵션 클릭
+document.querySelectorAll('.effect-option').forEach(option => {
+    option.addEventListener('click', (e) => {
+        const effectType = e.currentTarget.dataset.effect;
+        addEffect(effectType);
+        closeModal();
+    });
+});
+
+// 적용 버튼
+processBtn.addEventListener('click', () => {
+    applyPipeline();
+});
+
+// 초기화 버튼
+resetBtn.addEventListener('click', () => {
+    pipeline = [];
+    renderPipeline();
+    if (uploadedImage) applyPipeline();
+});
+
+// PNG 다운로드 버튼
+downloadBtn.addEventListener('click', () => {
+    resultCanvas.toBlob((blob) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'icon_edited.png';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }, 'image/png');
+});
+
+// ICNS 준비 파일 다운로드 버튼 (모달 표시)
+downloadIcnsBtn.addEventListener('click', () => {
+    icnsModal.classList.add('active');
+});
+
+// 모달 외부 클릭시 닫기
+effectModal.addEventListener('click', (e) => {
+    if (e.target === effectModal) {
+        closeModal();
+    }
+});
+
+icnsModal.addEventListener('click', (e) => {
+    if (e.target === icnsModal) {
+        closeIcnsModal();
+    }
+});
+
+// ==================== 이미지 처리 ====================
+
+// 이미지 로드
+function loadImage(file) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+            uploadedImage = img;
+            originalImage.src = e.target.result;
+            addEffectBtn.disabled = false;
+            processBtn.disabled = false;
+            resetBtn.disabled = false;
+            downloadBtn.disabled = false;
+            downloadIcnsBtn.disabled = false;
+            applyPipeline();
+        };
+        img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+}
+
+// ==================== 파이프라인 관리 ====================
+
+// 효과 추가
+function addEffect(type) {
+    const effect = {
+        id: effectIdCounter++,
+        type: type,
+        params: getDefaultParams(type)
+    };
+    pipeline.push(effect);
+    renderPipeline();
+    applyPipeline();
+}
+
+// 기본 파라미터
+function getDefaultParams(type) {
+    switch(type) {
+        case 'padding':
+            return { percent: 10 };
+        case 'rounded':
+            return { percent: 18 };
+        case 'invert':
+            return {};
+        case 'border':
+            return { width: 3 };
+        default:
+            return {};
+    }
+}
+
+// 효과 설정
+function getEffectConfig(type) {
+    const configs = {
+        padding: { icon: '📏', title: '내부 여백', unit: '%', min: 0, max: 30 },
+        rounded: { icon: '⭕', title: '라운드 코너', unit: '%', min: 0, max: 50 },
+        invert: { icon: '🔄', title: '색상 반전', unit: '', min: 0, max: 0 },
+        border: { icon: '🖼️', title: '테두리 추가', unit: 'px', min: 1, max: 10 }
+    };
+    return configs[type];
+}
+
+// 파이프라인 렌더링
+function renderPipeline() {
+    if (pipeline.length === 0) {
+        pipelineContainer.innerHTML = `
+            <div class="empty-pipeline">
+                <p>📝 효과를 추가하여 파이프라인을 구성하세요</p>
+                <p style="font-size: 12px; margin-top: 8px;">위에서 아래로 순서대로 적용됩니다</p>
+            </div>
+        `;
+        return;
+    }
+
+    pipelineContainer.innerHTML = pipeline.map((effect, index) => {
+        const config = getEffectConfig(effect.type);
+        return `
+            <div class="pipeline-step" data-effect-id="${effect.id}">
+                <div class="step-header">
+                    <div class="step-info">
+                        <div class="step-number">${index + 1}</div>
+                        <div class="step-title">${config.icon} ${config.title}</div>
+                    </div>
+                    <div class="step-controls">
+                        ${index > 0 ? `<button class="step-btn" onclick="moveEffect(${effect.id}, -1)">↑</button>` : ''}
+                        ${index < pipeline.length - 1 ? `<button class="step-btn" onclick="moveEffect(${effect.id}, 1)">↓</button>` : ''}
+                        <button class="step-btn danger" onclick="removeEffect(${effect.id})">삭제</button>
+                    </div>
+                </div>
+                <div class="effect-controls">
+                    ${renderEffectControls(effect)}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+// 효과 컨트롤 렌더링
+function renderEffectControls(effect) {
+    const config = getEffectConfig(effect.type);
+
+    if (effect.type === 'padding') {
+        return `
+            <div class="control-group">
+                <label>여백:</label>
+                <span class="value-display">${effect.params.percent}${config.unit}</span>
+                <input type="range"
+                    min="${config.min}"
+                    max="${config.max}"
+                    value="${effect.params.percent}"
+                    oninput="updateEffectParam(${effect.id}, 'percent', this.value)">
+            </div>
+        `;
+    } else if (effect.type === 'rounded') {
+        return `
+            <div class="control-group">
+                <label>반경:</label>
+                <span class="value-display">${effect.params.percent}${config.unit}</span>
+                <input type="range"
+                    min="${config.min}"
+                    max="${config.max}"
+                    value="${effect.params.percent}"
+                    oninput="updateEffectParam(${effect.id}, 'percent', this.value)">
+            </div>
+        `;
+    } else if (effect.type === 'invert') {
+        return `
+            <div class="control-group">
+                <label style="color: #667eea;">RGB 반전, 투명도 유지</label>
+            </div>
+        `;
+    } else if (effect.type === 'border') {
+        return `
+            <div class="control-group">
+                <label>두께:</label>
+                <span class="value-display">${effect.params.width}${config.unit}</span>
+                <input type="range"
+                    min="${config.min}"
+                    max="${config.max}"
+                    value="${effect.params.width}"
+                    oninput="updateEffectParam(${effect.id}, 'width', this.value)">
+            </div>
+        `;
+    }
+}
+
+// 효과 파라미터 업데이트
+window.updateEffectParam = function(effectId, param, value) {
+    const effect = pipeline.find(e => e.id === effectId);
+    if (effect) {
+        effect.params[param] = parseInt(value);
+        renderPipeline();
+        applyPipeline();
+    }
+};
+
+// 효과 이동
+window.moveEffect = function(effectId, direction) {
+    const index = pipeline.findIndex(e => e.id === effectId);
+    if (index === -1) return;
+
+    const newIndex = index + direction;
+    if (newIndex < 0 || newIndex >= pipeline.length) return;
+
+    [pipeline[index], pipeline[newIndex]] = [pipeline[newIndex], pipeline[index]];
+    renderPipeline();
+    applyPipeline();
+};
+
+// 효과 제거
+window.removeEffect = function(effectId) {
+    pipeline = pipeline.filter(e => e.id !== effectId);
+    renderPipeline();
+    applyPipeline();
+};
+
+// ==================== 효과 적용 ====================
+
+// 파이프라인 적용
+function applyPipeline() {
+    if (!uploadedImage) {
+        // 초기 상태 정보 표시
+        info.innerHTML = '<p><span class="emoji">💡</span> 이미지를 업로드하여 시작하세요</p>';
+        return;
+    }
+
+    const originalWidth = uploadedImage.width;
+    const originalHeight = uploadedImage.height;
+
+    // 임시 캔버스 생성 (현재 이미지 상태)
+    let currentCanvas = document.createElement('canvas');
+    currentCanvas.width = originalWidth;
+    currentCanvas.height = originalHeight;
+    let currentCtx = currentCanvas.getContext('2d');
+    currentCtx.drawImage(uploadedImage, 0, 0);
+
+    // 각 효과를 순차적으로 적용
+    for (const effect of pipeline) {
+        currentCanvas = applyEffect(currentCanvas, effect);
+    }
+
+    // 최종 결과를 resultCanvas에 그리기
+    resultCanvas.width = originalWidth;
+    resultCanvas.height = originalHeight;
+    const ctx = resultCanvas.getContext('2d');
+    ctx.clearRect(0, 0, originalWidth, originalHeight);
+    ctx.drawImage(currentCanvas, 0, 0);
+
+    updateInfo();
+}
+
+// 개별 효과 적용
+function applyEffect(sourceCanvas, effect) {
+    const width = sourceCanvas.width;
+    const height = sourceCanvas.height;
+
+    const resultCanvas = document.createElement('canvas');
+    resultCanvas.width = width;
+    resultCanvas.height = height;
+    const ctx = resultCanvas.getContext('2d');
+
+    if (effect.type === 'padding') {
+        // 패딩 적용
+        const paddingPercent = effect.params.percent;
+        const padding = Math.floor(Math.min(width, height) * paddingPercent / 100);
+        const newWidth = width - (padding * 2);
+        const newHeight = height - (padding * 2);
+
+        // 투명 배경
+        ctx.clearRect(0, 0, width, height);
+
+        // 축소된 이미지를 중앙에 배치
+        ctx.drawImage(sourceCanvas, 0, 0, width, height, padding, padding, newWidth, newHeight);
+
+    } else if (effect.type === 'rounded') {
+        // 라운드 코너 적용
+        const radiusPercent = effect.params.percent;
+        const cornerRadius = Math.floor(Math.min(width, height) * radiusPercent / 100);
+
+        ctx.clearRect(0, 0, width, height);
+        ctx.beginPath();
+        ctx.roundRect(0, 0, width, height, cornerRadius);
+        ctx.clip();
+        ctx.drawImage(sourceCanvas, 0, 0);
+
+    } else if (effect.type === 'invert') {
+        // 색상 반전 적용
+        ctx.drawImage(sourceCanvas, 0, 0);
+
+        // 픽셀 데이터 가져오기
+        const imageData = ctx.getImageData(0, 0, width, height);
+        const data = imageData.data;
+
+        // 모든 픽셀의 RGB 반전 (Alpha는 유지)
+        for (let i = 0; i < data.length; i += 4) {
+            data[i] = 255 - data[i];         // R
+            data[i + 1] = 255 - data[i + 1]; // G
+            data[i + 2] = 255 - data[i + 2]; // B
+            // data[i + 3]은 Alpha, 그대로 유지
+        }
+
+        // 반전된 픽셀 데이터를 다시 그리기
+        ctx.putImageData(imageData, 0, 0);
+
+    } else if (effect.type === 'border') {
+        // 테두리 추가 (어두운 부분을 흰색으로, 검은색 테두리 추가)
+        ctx.drawImage(sourceCanvas, 0, 0);
+
+        // 픽셀 데이터 가져오기
+        const imageData = ctx.getImageData(0, 0, width, height);
+        const data = imageData.data;
+
+        // 1. 그레이스케일 변환 및 마스크 생성 (어두운 부분 찾기)
+        const mask = new Uint8Array(width * height);
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const idx = (y * width + x) * 4;
+                const gray = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
+                mask[y * width + x] = gray < 128 ? 255 : 0;
+            }
+        }
+
+        // 2. 형태학적 팽창 (dilation) - 테두리 생성
+        const borderWidth = effect.params.width;
+        const dilatedMask = new Uint8Array(width * height);
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                let maxVal = 0;
+                // 주변 픽셀 확인
+                for (let dy = -borderWidth; dy <= borderWidth; dy++) {
+                    for (let dx = -borderWidth; dx <= borderWidth; dx++) {
+                        const ny = y + dy;
+                        const nx = x + dx;
+                        if (ny >= 0 && ny < height && nx >= 0 && nx < width) {
+                            if (mask[ny * width + nx] > maxVal) {
+                                maxVal = mask[ny * width + nx];
+                            }
+                        }
+                    }
+                }
+                dilatedMask[y * width + x] = maxVal;
+            }
+        }
+
+        // 3. 테두리 마스크 = 팽창된 마스크 - 원본 마스크
+        const borderMask = new Uint8Array(width * height);
+        for (let i = 0; i < width * height; i++) {
+            borderMask[i] = dilatedMask[i] > 0 && mask[i] === 0 ? 255 : 0;
+        }
+
+        // 4. 새 이미지 생성: 투명 배경
+        ctx.clearRect(0, 0, width, height);
+        const newData = ctx.getImageData(0, 0, width, height);
+        const newPixels = newData.data;
+
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const idx = (y * width + x) * 4;
+                const maskIdx = y * width + x;
+
+                if (borderMask[maskIdx] > 0) {
+                    // 테두리: 검은색
+                    newPixels[idx] = 0;
+                    newPixels[idx + 1] = 0;
+                    newPixels[idx + 2] = 0;
+                    newPixels[idx + 3] = 255;
+                } else if (mask[maskIdx] > 0) {
+                    // N 글자: 흰색
+                    newPixels[idx] = 255;
+                    newPixels[idx + 1] = 255;
+                    newPixels[idx + 2] = 255;
+                    newPixels[idx + 3] = 255;
+                }
+                // 나머지는 투명 (이미 0으로 초기화됨)
+            }
+        }
+
+        ctx.putImageData(newData, 0, 0);
+    }
+
+    return resultCanvas;
+}
+
+// ==================== ICNS 생성 ====================
+
+// ICNS용 아이콘셋 생성 (ZIP)
+async function generateIconset() {
+    if (!uploadedImage) return;
+
+    // JSZip 인스턴스 생성
+    const zip = new JSZip();
+    const iconsetFolder = zip.folder('icon.iconset');
+
+    // macOS ICNS에 필요한 크기들
+    const sizes = [
+        { size: 16, name: 'icon_16x16.png' },
+        { size: 32, name: 'icon_16x16@2x.png' },
+        { size: 32, name: 'icon_32x32.png' },
+        { size: 64, name: 'icon_32x32@2x.png' },
+        { size: 128, name: 'icon_128x128.png' },
+        { size: 256, name: 'icon_128x128@2x.png' },
+        { size: 256, name: 'icon_256x256.png' },
+        { size: 512, name: 'icon_256x256@2x.png' },
+        { size: 512, name: 'icon_512x512.png' },
+        { size: 1024, name: 'icon_512x512@2x.png' }
+    ];
+
+    // 각 크기별 PNG 생성
+    for (const {size, name} of sizes) {
+        const resizedBlob = await resizeCanvas(resultCanvas, size, size);
+        iconsetFolder.file(name, resizedBlob);
+    }
+
+    // README 파일 추가
+    const readmeContent = `# macOS ICNS 생성 방법
+
+이 폴더를 사용하여 .icns 파일을 생성하세요:
+
+1. 터미널을 열고 이 폴더가 있는 위치로 이동
+2. 다음 명령어 실행:
+   iconutil -c icns icon.iconset
+
+3. icon.icns 파일이 생성됩니다!
+
+또는 png_to_icns.sh 스크립트를 사용할 수도 있습니다.
+`;
+    iconsetFolder.file('README.txt', readmeContent);
+
+    // ZIP 생성 및 다운로드
+    const content = await zip.generateAsync({type: 'blob'});
+    const url = URL.createObjectURL(content);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'icon.iconset.zip';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+// Canvas 리사이즈 함수
+function resizeCanvas(sourceCanvas, width, height) {
+    return new Promise((resolve) => {
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = width;
+        tempCanvas.height = height;
+        const ctx = tempCanvas.getContext('2d');
+
+        // 고품질 리샘플링
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+
+        ctx.drawImage(sourceCanvas, 0, 0, width, height);
+
+        tempCanvas.toBlob((blob) => {
+            resolve(blob);
+        }, 'image/png');
+    });
+}
+
+// ==================== UI 업데이트 ====================
+
+// 모달 닫기
+function closeModal() {
+    effectModal.classList.remove('active');
+}
+
+// ICNS 모달 닫기
+window.closeIcnsModal = function() {
+    icnsModal.classList.remove('active');
+};
+
+// 스크립트 복사
+window.copyScript = function() {
+    const scriptText = document.getElementById('icnsScript').textContent;
+    navigator.clipboard.writeText(scriptText).then(() => {
+        // 복사 성공 피드백
+        const btn = event.target;
+        const originalText = btn.textContent;
+        btn.textContent = '✓ 복사됨';
+        btn.style.background = '#28a745';
+        setTimeout(() => {
+            btn.textContent = originalText;
+            btn.style.background = '#667eea';
+        }, 2000);
+    });
+};
+
+// ICNS 다운로드 확인
+window.confirmIcnsDownload = async function() {
+    closeIcnsModal();
+    await generateIconset();
+};
+
+// 정보 업데이트
+function updateInfo() {
+    const width = uploadedImage.width;
+    const height = uploadedImage.height;
+
+    let infoHTML = '<p><span class="emoji">✅</span> 편집 완료</p>';
+    infoHTML += `<p><span class="emoji">📐</span> 캔버스 크기: ${width}×${height}px</p>`;
+
+    if (pipeline.length === 0) {
+        infoHTML += '<p><span class="emoji">💡</span> 효과를 추가하여 적용해보세요</p>';
+    } else {
+        infoHTML += `<p><span class="emoji">🔧</span> 적용된 효과: ${pipeline.length}개</p>`;
+
+        pipeline.forEach((effect, index) => {
+            const config = getEffectConfig(effect.type);
+            if (effect.type === 'padding') {
+                const padding = Math.floor(Math.min(width, height) * effect.params.percent / 100);
+                infoHTML += `<p><span class="emoji">${config.icon}</span> ${index + 1}. ${config.title}: ${padding}px (${effect.params.percent}%)</p>`;
+            } else if (effect.type === 'rounded') {
+                const radius = Math.floor(Math.min(width, height) * effect.params.percent / 100);
+                infoHTML += `<p><span class="emoji">${config.icon}</span> ${index + 1}. ${config.title}: ${radius}px (${effect.params.percent}%)</p>`;
+            } else if (effect.type === 'invert') {
+                infoHTML += `<p><span class="emoji">${config.icon}</span> ${index + 1}. ${config.title}</p>`;
+            } else if (effect.type === 'border') {
+                infoHTML += `<p><span class="emoji">${config.icon}</span> ${index + 1}. ${config.title}: ${effect.params.width}px</p>`;
+            }
+        });
+    }
+
+    info.innerHTML = infoHTML;
+}
+
+// ==================== 초기화 ====================
+
+// 초기 정보 표시
+applyPipeline();
